@@ -1,0 +1,19 @@
+# Build artifacts
+bin/
+webapp/dist/
+webapp/node_modules/
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Misc
+*.md
+deploy/
+Dockerfile
+.dockerignore

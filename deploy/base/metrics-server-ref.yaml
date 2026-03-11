@@ -1,0 +1,9 @@
+# Install metrics-server for HPA (CPU/Memory) and kubectl top
+# Optional: use --kubelet-insecure-tls for dev clusters without proper certs
+# kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+---
+# NVIDIA Device Plugin - run on GPU nodes so nvidia.com/gpu is advertised
+# Install: kubectl apply -f https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/v0.14.1/nvidia-device-plugin.yml
+# Or use Helm: helm repo add nvdp https://nvidia.github.io/k8s-device-plugin && helm install nvidia-device-plugin nvdp/nvidia-device-plugin
+---
+# This dir can also hold kustomization.yaml or Helm values for overlay (dev/staging/prod)

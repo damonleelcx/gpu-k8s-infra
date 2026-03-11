@@ -1,0 +1,73 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: gpuinferenceautoscalers.autoscaling.gpu.k8s.infra
+spec:
+  group: autoscaling.gpu.k8s.infra
+  names:
+    kind: GPUInferenceAutoscaler
+    listKind: GPUInferenceAutoscalerList
+    plural: gpuinferenceautoscalers
+    shortNames:
+      - gia
+    singular: gpuinferenceautoscaler
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                scaleTargetRef:
+                  type: object
+                  required: [name]
+                  properties:
+                    apiVersion: { type: string }
+                    kind: { type: string }
+                    name: { type: string }
+                minReplicas: { type: integer, format: int32 }
+                maxReplicas: { type: integer, format: int32 }
+                metrics:
+                  type: array
+                  items:
+                    type: object
+                    required: [type, targetPerReplica]
+                    properties:
+                      type: { type: string, enum: [QPS, GPUUtilization, QueueLength] }
+                      targetPerReplica: { type: number }
+                      prometheusQuery: { type: string }
+                      queueConfig:
+                        type: object
+                        properties:
+                          redisAddr: { type: string }
+                          key: { type: string }
+                          keyType: { type: string }
+                prediction:
+                  type: object
+                  properties:
+                    enable: { type: boolean }
+                    lookbackWindowSeconds: { type: integer }
+                    preScaleSeconds: { type: integer }
+                    method: { type: string }
+                coldStart:
+                  type: object
+                  properties:
+                    estimatedStartupSeconds: { type: integer }
+                    warmPoolSize: { type: integer }
+                    scaleUpDelaySeconds: { type: integer }
+                syncPeriodSeconds: { type: integer }
+            status:
+              type: object
+              properties:
+                currentReplicas: { type: integer }
+                desiredReplicas: { type: integer }
+                lastScaleTime: { type: string, format: date-time }
+                conditions: { type: array }
+                currentMetrics: { type: array }
+      subresources:
+        status: {}

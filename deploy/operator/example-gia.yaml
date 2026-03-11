@@ -1,0 +1,69 @@
+# Example: scale a GPU inference Deployment based on QPS + prediction + cold start
+# Prereqs: Prometheus scraping inference QPS (e.g. inference_requests_total or similar)
+apiVersion: autoscaling.gpu.k8s.infra/v1alpha1
+kind: GPUInferenceAutoscaler
+metadata:
+  name: inference-qps
+  namespace: default
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: my-gpu-inference   # your inference Deployment
+  minReplicas: 0
+  maxReplicas: 10
+  syncPeriodSeconds: 15
+  metrics:
+    - type: QPS
+      targetPerReplica: 100
+      # Total QPS across all pods; desired = ceil(totalQPS / 100)
+      prometheusQuery: 'sum(rate(inference_requests_total{job="my-inference"}[1m]))'
+  prediction:
+    enable: true
+    lookbackWindowSeconds: 300
+    preScaleSeconds: 60
+    method: exponential
+  coldStart:
+    estimatedStartupSeconds: 90
+    warmPoolSize: 0
+    scaleUpDelaySeconds: 120
+---
+# Example: scale by GPU utilization (DCGM / NVIDIA exporter)
+# apiVersion: autoscaling.gpu.k8s.infra/v1alpha1
+# kind: GPUInferenceAutoscaler
+# metadata:
+#   name: inference-gpu-util
+#   namespace: default
+# spec:
+#   scaleTargetRef:
+#     name: my-gpu-inference
+#   minReplicas: 1
+#   maxReplicas: 8
+#   metrics:
+#     - type: GPUUtilization
+#       targetPerReplica: 70
+#       prometheusQuery: 'avg(DCGM_FI_DEV_GPU_UTIL)'
+#   coldStart:
+#     estimatedStartupSeconds: 60
+---
+# Example: scale by Redis queue length (e.g. inference request queue)
+# apiVersion: autoscaling.gpu.k8s.infra/v1alpha1
+# kind: GPUInferenceAutoscaler
+# metadata:
+#   name: inference-queue
+#   namespace: default
+# spec:
+#   scaleTargetRef:
+#     name: my-gpu-inference
+#   minReplicas: 0
+#   maxReplicas: 20
+#   metrics:
+#     - type: QueueLength
+#       targetPerReplica: 50
+#       queueConfig:
+#         redisAddr: redis.default.svc:6379
+#         key: inference:queue
+#         keyType: list
+#   coldStart:
+#     estimatedStartupSeconds: 120
+#     warmPoolSize: 1

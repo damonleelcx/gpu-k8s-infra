@@ -1,0 +1,16 @@
+# Prometheus scrape config for GPU Platform API
+# Add to your Prometheus config or use ServiceMonitor if using Prometheus Operator
+#
+# scrape_configs:
+#   - job_name: 'gpu-platform-api'
+#     kubernetes_sd_configs:
+#       - role: endpoints
+#         namespaces:
+#           names: ['gpu-platform']
+#     relabel_configs:
+#       - source_labels: [__meta_kubernetes_service_name]
+#         action: keep
+#         regex: gpu-platform-api
+#       - source_labels: [__meta_kubernetes_endpoint_port_name]
+#         action: keep
+#         regex: http

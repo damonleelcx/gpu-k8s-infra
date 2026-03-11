@@ -1,0 +1,103 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gpu-autoscaler
+  labels:
+    app.kubernetes.io/name: gpu-inference-autoscaler
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: gpu-inference-autoscaler
+  namespace: gpu-autoscaler
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: gpu-inference-autoscaler
+rules:
+  - apiGroups: ["autoscaling.gpu.k8s.infra"]
+    resources: ["gpuinferenceautoscalers", "gpuinferenceautoscalers/status"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["pods", "events"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: gpu-inference-autoscaler
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: gpu-inference-autoscaler
+subjects:
+  - kind: ServiceAccount
+    name: gpu-inference-autoscaler
+    namespace: gpu-autoscaler
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gpu-inference-autoscaler
+  namespace: gpu-autoscaler
+  labels:
+    app: gpu-inference-autoscaler
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gpu-inference-autoscaler
+  template:
+    metadata:
+      labels:
+        app: gpu-inference-autoscaler
+    spec:
+      serviceAccountName: gpu-inference-autoscaler
+      containers:
+        - name: operator
+          image: gpu-inference-autoscaler:latest
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--leader-elect=true"
+            - "--metrics-bind-address=:8081"
+          env:
+            - name: PROMETHEUS_URL
+              value: "http://prometheus.monitoring.svc:9090"
+            - name: REDIS_ADDR
+              value: ""   # set e.g. redis.gpu-platform.svc:6379 if using queue metric
+          ports:
+            - containerPort: 8081
+              name: metrics
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              cpu: "200m"
+              memory: "256Mi"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: gpu-inference-autoscaler-crd
+rules:
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: gpu-inference-autoscaler-crd
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: gpu-inference-autoscaler-crd
+subjects:
+  - kind: ServiceAccount
+    name: gpu-inference-autoscaler
+    namespace: gpu-autoscaler
