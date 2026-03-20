@@ -218,6 +218,105 @@ kubectl apply -f deploy/operator/example-gia.yaml
 - **pkg/autoscaler/coldstart**：冷启动副本修正、扩缩稳定窗口。
 - **pkg/autoscaler/scaler**：根据多指标与目标计算 desiredReplicas。
 
+### Operator / Controller 深入理解
+
+从控制面看，系统围绕一个核心 CR：`GPUInferenceAutoscaler`（简称 GIA）运转。
+
+- **Operator 部署面**（`deploy/operator/operator.yaml`）：
+  - 创建 `gpu-autoscaler` 命名空间、`gpu-inference-autoscaler` ServiceAccount。
+  - 赋予对 `gpuinferenceautoscalers`、`gpuinferenceautoscalers/status`、`deployments` 的读写权限，以及 `pods/events` 只读权限。
+  - 部署 Operator 容器（默认镜像 `gpu-inference-autoscaler:latest`），启用 `--leader-elect=true`。
+  - 通过环境变量注入 `PROMETHEUS_URL`、`REDIS_ADDR` 作为指标后端连接信息。
+  - CRD 本体定义在 `deploy/operator/crd.yaml`（`gpuinferenceautoscalers.autoscaling.gpu.k8s.infra`）。
+
+- **Controller 启动面**（`cmd/operator/main.go`）：
+  - 注册 `client-go` 原生资源 + GIA Scheme。
+  - 注册默认值逻辑（`RegisterDefaults`），补齐 `minReplicas`、`syncPeriodSeconds`、`scaleTargetRef` 等缺省字段。
+  - 构建 `GPUInferenceAutoscalerReconciler`，注入 `Fetcher + Predictor + Scaler`。
+  - 启动 manager，进入持续 Reconcile 循环。
+
+- **Controller 触发与调谐面**（`controllers/gia_controller.go`）：
+  - Watch 对象：`GPUInferenceAutoscaler`。
+  - 每轮流程：
+    1) 读取 GIA；若对象删除，清理内部 `lastScale` 缓存。
+    2) 读取目标 Deployment（`scaleTargetRef`）。
+    3) 从 Deployment 得到 `currentReplicas` 写入状态。
+    4) 调用 `Scaler.Compute()` 计算 `desiredReplicas`。
+    5) 若刚扩容且当前想缩容，进入冷启动稳定窗口，延迟缩容。
+    6) 当 `desired != current` 时更新 Deployment 副本。
+    7) 回写 GIA `status`（`current/desired/conditions/currentMetrics/lastScaleTime`）。
+    8) 按 `syncPeriodSeconds` 周期再次入队（默认 15 秒）。
+
+- **缩放算法面**（`pkg/autoscaler/scaler`）：
+  - 对每个 metric 拉当前值（Prometheus 或 Redis）。
+  - 单指标计算：`ceil(value / targetPerReplica)`。
+  - 多指标聚合：取最大副本需求（容量保守策略）。
+  - 约束：最终副本夹在 `[minReplicas, maxReplicas]`。
+  - 可选预测：使用历史序列做指数平滑/线性预测，提前扩容。
+  - 冷启动修正：支持 warm pool 与 scale-up 后缩容延迟。
+
+- **可靠性行为**：
+  - 幂等：`desired == current` 时不写 Deployment，只更新状态。
+  - 错误处理：
+    - K8s API 错误返回 runtime 重试。
+    - 业务计算错误写 Condition（如 `ComputeError`）并按周期重试。
+  - 并发控制：leader election 打开，避免多副本 operator 同时生效。
+
+### 从创建一条 GIA YAML 到 Deployment 副本变化（逐秒时序）
+
+下面是典型一轮从“提交 CR”到“副本落地”的观测脚本与时间线。示例假设：
+- GIA 名称：`inference-qps`
+- 命名空间：`default`
+- 目标 Deployment：`my-gpu-inference`
+- 同步周期：15s
+
+```bash
+# 0) 安装 CRD + Operator（若尚未安装）
+make deploy-operator
+
+# 1) 创建 GIA
+kubectl apply -f deploy/operator/example-gia.yaml
+
+# 2) 观察 GIA 状态与目标 Deployment 副本
+kubectl get gia -n default -w
+kubectl get deploy my-gpu-inference -n default -w
+
+# 3) 观察 controller 日志（另开一个终端）
+kubectl logs -n gpu-autoscaler deploy/gpu-inference-autoscaler -f
+
+# 4) 查看完整状态详情（含 currentMetrics / conditions）
+kubectl get gia inference-qps -n default -o yaml
+```
+
+建议按以下时序理解：
+
+- **T+0s**：`kubectl apply` 提交 GIA，API Server 持久化资源。
+- **T+1s**：Controller 收到 GIA 事件，进入首次 Reconcile。
+- **T+2~4s**：
+  - 读取目标 Deployment；
+  - 拉取当前指标（Prometheus/Redis）；
+  - 计算 `desiredReplicas`，写入 `status.desiredReplicas/currentMetrics`。
+- **T+4~6s**：
+  - 若 `desired != current`，更新目标 Deployment `spec.replicas`；
+  - 记录 `status.lastScaleTime` 与 `Scaling` condition。
+- **T+6~20s**：
+  - K8s Deployment Controller 开始滚动扩缩；
+  - Pod 进入 `Pending -> Running -> Ready`。
+- **T+15s（下一轮）**：
+  - GIA 按 `syncPeriodSeconds` 再次 Reconcile；
+  - 若仍需要扩缩继续调整；若达到目标写 `Ready` condition。
+
+关键观察点：
+- `kubectl get gia -o yaml` 中：
+  - `status.currentReplicas`
+  - `status.desiredReplicas`
+  - `status.currentMetrics`
+  - `status.conditions[*].reason/message`
+- Operator 日志中的关键词：
+  - `compute desired replicas`
+  - `scaled deployment`
+  - `scale-down delayed by stabilization window`
+
 ---
 
 ## 许可证
